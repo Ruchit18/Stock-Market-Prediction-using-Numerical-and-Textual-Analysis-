@@ -1,0 +1,237 @@
+#1 Downloading Datasets | Stock Price Data | Stock News Headlines Data
+import warnings
+warnings.filterwarnings('ignore')
+
+import math
+import pandas as pd
+import numpy as np
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from keras.models import Sequential
+from keras.layers import Dense, LSTM, Dropout, Dense, Activation
+
+import nltk
+from nltk.classify import NaiveBayesClassifier
+from nltk.corpus import subjectivity
+from nltk.sentiment import SentimentAnalyzer
+from nltk.sentiment.util import *
+
+from sklearn import preprocessing, metrics
+from sklearn.preprocessing import MinMaxScaler
+stock_price = pd.read_csv('AAPL.csv')
+stock_headlines = pd.read_csv('india-news-headlines.csv')
+stock_price.head()
+
+stock_headlines.head()
+
+2 Feature Engineering
+len(stock_price), len(stock_headlines)
+stock_price.isna().any(), stock_headlines.isna().any()
+
+# dropping duplicates
+stock_price = stock_price.drop_duplicates()
+
+# coverting the datatype of column 'Date' from type object to type 'datetime'
+stock_price['Date'] = pd.to_datetime(stock_price['Date']).dt.normalize()
+
+# filtering the important columns required
+stock_price = stock_price.filter(['Date', 'Close', 'Open', 'High', 'Low', 'Volume'])
+
+# setting column 'Date' as the index column
+stock_price.set_index('Date', inplace= True)
+
+# sorting the data according to the index i.e 'Date'
+stock_price = stock_price.sort_index(ascending=True, axis=0)
+stock_price
+# dropping duplicates
+stock_headlines = stock_headlines.drop_duplicates()
+
+# coverting the datatype of column 'Date' from type string to type 'datetime'
+stock_headlines['publish_date'] = stock_headlines['publish_date'].astype(str)
+stock_headlines['publish_date'] = stock_headlines['publish_date'].apply(lambda x: x[0:4]+'-'+x[4:6]+'-'+x[6:8])
+stock_headlines['publish_date'] = pd.to_datetime(stock_headlines['publish_date']).dt.normalize()
+
+# filtering the important columns required
+stock_headlines = stock_headlines.filter(['publish_date', 'headline_text'])
+
+# grouping the news headlines according to 'Date'
+stock_headlines = stock_headlines.groupby(['publish_date'])['headline_text'].apply(lambda x: ','.join(x)).reset_index()
+
+# setting column 'Date' as the index column
+stock_headlines.set_index('publish_date', inplace= True)
+
+# sorting the data according to the index i.e 'Date'
+stock_headlines = stock_headlines.sort_index(ascending=True, axis=0)
+stock_headlines
+
+stock_data = pd.concat([stock_price, stock_headlines], axis=1)
+stock_data.dropna(axis=0, inplace=True)
+stock_data
+
+3 Finalising Stock Data and writing to Disk
+stock_data['compound'] = ''
+stock_data['negative'] = ''
+stock_data['neutral'] = ''
+stock_data['positive'] = ''
+stock_data.head()
+
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+import unicodedata
+
+# instantiating the Sentiment Analyzer
+sid = SentimentIntensityAnalyzer()
+
+# calculating sentiment scores
+stock_data['compound'] = stock_data['headline_text'].apply(lambda x: sid.polarity_scores(x)['compound'])
+stock_data['negative'] = stock_data['headline_text'].apply(lambda x: sid.polarity_scores(x)['neg'])
+stock_data['neutral'] = stock_data['headline_text'].apply(lambda x: sid.polarity_scores(x)['neu'])
+stock_data['positive'] = stock_data['headline_text'].apply(lambda x: sid.polarity_scores(x)['pos'])
+
+#4 Reading Stock Data
+# displaying the stock data
+stock_data.head()
+
+stock_data.drop(['headline_text'], inplace=True, axis=1)
+stock_data = stock_data[['Close', 'compound', 'negative', 'neutral', 'positive', 'Open', 'High', 'Low', 'Volume']]
+stock_data.head()
+
+
+stock_data.to_csv('stock_data.csv')
+
+stock_data = pd.read_csv('stock_data.csv', index_col = False)
+stock_data.rename(columns={'Unnamed: 0':'Date'}, inplace = True)
+stock_data.set_index('Date', inplace=True)
+stock_data.head()
+
+#5 Feature Engineering of Stock Data
+stock_data.shape
+stock_data.isna().any()
+stock_data.describe(include='all')
+stock_data.info()
+
+# 6 EDA of Stock Data
+plt.figure(figsize=(16,10))
+stock_data['Close'].plot()
+plt.title("Close Price")
+plt.xlabel('Date')
+plt.ylabel('Close Price ($)') 
+stock_data.rolling(7).mean().head(20)
+
+plt.figure(figsize=(16,10))
+stock_data['Close'].plot()
+stock_data.rolling(window=30).mean()['Close'].plot()
+
+stock_data
+
+#7 Data Preparation for Modelling
+percentage_of_data = 1.0
+data_to_use = int(percentage_of_data*(len(stock_data)-1))
+
+# using 80% of data for training
+train_end = int(data_to_use*0.8)
+total_data = len(stock_data)
+start = total_data - data_to_use
+
+# printing number of records in the training and test datasets
+print("Number of records in Training Data:", train_end)
+print("Number of records in Test Data:", total_data - train_end)
+steps_to_predict = 1
+
+# capturing data to be used for each column
+close_price = stock_data.iloc[start:total_data,0] #close
+compound = stock_data.iloc[start:total_data,1] #compound
+negative = stock_data.iloc[start:total_data,2] #neg
+neutral = stock_data.iloc[start:total_data,3] #neu
+positive = stock_data.iloc[start:total_data,4] #pos
+open_price = stock_data.iloc[start:total_data,5] #open
+high = stock_data.iloc[start:total_data,6] #high
+low = stock_data.iloc[start:total_data,7] #low
+volume = stock_data.iloc[start:total_data,8] #volume
+
+# printing close price
+print("Close Price:")
+close_price
+close_price_shifted = close_price.shift(-1) 
+
+# shifting next day compound
+compound_shifted = compound.shift(-1) 
+
+# concatenating the captured training data into a dataframe
+data = pd.concat([close_price, close_price_shifted, compound, compound_shifted, volume, open_price, high, low], axis=1)
+
+# setting column names of the revised stock data
+data.columns = ['close_price', 'close_price_shifted', 'compound', 'compound_shifted','volume', 'open_price', 'high', 'low']
+
+# dropping nulls
+data = data.dropna()    
+data.head(10)
+
+#8 Setting the Target Variable and the Feature Dataset
+y = data['close_price_shifted']
+y
+
+cols = ['close_price', 'compound', 'compound_shifted', 'volume', 'open_price', 'high', 'low']
+x = data[cols]
+x
+
+#9 Stock Data Modelling
+np.random.seed(2016)
+
+# setting the model architecture
+model=Sequential()
+model.add(LSTM(100,return_sequences=True,activation='tanh',input_shape=(len(cols),1)))
+model.add(Dropout(0.1))
+model.add(LSTM(100,return_sequences=True,activation='tanh'))
+model.add(Dropout(0.1))
+model.add(LSTM(100,activation='tanh'))
+model.add(Dropout(0.1))
+model.add(Dense(1))
+
+# printing the model summary
+model.summary()
+model.compile(loss='mse' , optimizer='adam')
+
+# fitting the model using the training dataset
+model.fit(X_train, y_train, validation_split=0.2, epochs=10, batch_size=8, verbose=1)
+
+#10 Predictions
+predictions = model.predict(X_test) 
+
+# unscaling the predictions
+predictions = scaler_y.inverse_transform(np.array(predictions).reshape((len(predictions), 1)))
+
+# printing the predictions
+print('Predictions:')
+predictions[0:5]
+
+#11 Model Evaluation
+train_loss = model.evaluate(X_train, y_train, batch_size = 1)
+
+# calculating the test mean-squared-error
+test_loss = model.evaluate(X_test, y_test, batch_size = 1)
+
+# printing the training and the test mean-squared-errors
+print('Train Loss =', round(train_loss,4))
+print('Test Loss =', round(test_loss,4))
+root_mean_square_error = np.sqrt(np.mean(np.power((y_test - predictions),2)))
+print('Root Mean Square Error =', round(root_mean_square_error,4))
+rmse = metrics.mean_squared_error(y_test, predictions)
+print('Root Mean Square Error (sklearn.metrics) =', round(np.sqrt(rmse),4))
+
+#12 Plotting the Predictions against unseen data
+
+X_test = scaler_x.inverse_transform(np.array(X_test).reshape((len(X_test), len(cols))))
+
+# unscaling the test y dataset, y_test
+y_train = scaler_y.inverse_transform(np.array(y_train).reshape((len(y_train), 1)))
+y_test = scaler_y.inverse_transform(np.array(y_test).reshape((len(y_test), 1)))
+plt.figure(figsize=(16,10))
+
+# plt.plot([row[0] for row in y_train], label="Training Close Price")
+plt.plot(predictions, label="Predicted Close Price")
+plt.plot([row[0] for row in y_test], label="Testing Close Price")
+plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), fancybox=True, shadow=True, ncol=2)
+plt.show()
+
